@@ -1,0 +1,150 @@
+var rgbVis = {
+  min: 0.0,
+  max: 3000,
+  bands: ['b4', 'b3', 'b2'],
+};
+
+Map.addLayer(image, rgbVis, 'Istanbul');
+
+var ct=deniz.merge(gol).merge(bina)
+.merge(orman).merge(arazi).merge(yol);
+
+// Eğitim ve test örnekleri
+var sample= ct.randomColumn();
+var trainingsample= sample.filter('random<=0.70')
+var validationsample= sample.filter('random>0.70')
+
+  
+// Overlay the point on the image to get training data.
+var overlay = image.sampleRegions({
+  collection: ct, 
+  properties: ['sinif'], 
+  scale: 20
+});
+
+// Train a classifier.
+var classifier = ee.Classifier.smileRandomForest(100).train({
+  features: overlay,  
+  classProperty: 'sinif', 
+  inputProperties: image.bandNames()
+});
+
+// // Classify the image.
+var classified = image.classify(classifier);
+Map.addLayer(classified, {min: 1, max: 6, palette: ['blue', 'green', 'red', 'green', 'yellow', 'gray']}, 'istanbul_class'); 
+
+print (classified);
+
+
+// Istanbul
+var test = classified.sampleRegions({
+  collection: validationsample,
+  properties: ['sinif'],
+  tileScale: 16,
+  scale: 10,
+});
+
+var testConfusionMatrix = test.errorMatrix('sinif', 'classification')
+
+// Kappa katsayısını hesapla
+var kappa = testConfusionMatrix.kappa();
+
+print('Kappa Katsayısı 2022:', kappa);
+
+
+
+
+
+// Printing of confusion matrix may time out. Alternatively, you can export it as CSV
+print('Confusion Matrix 2022', testConfusionMatrix);
+print('Test Accuracy 2022', testConfusionMatrix.accuracy());
+
+// Exporting Results
+//************************************************************************** 
+
+// Create a Feature with null geometry and the value we want to export.
+// Use .array() to convert Confusion Matrix to an Array so it can be
+// exported in a CSV file
+var fc2022 = ee.FeatureCollection([
+  ee.Feature(null, {
+    'accuracy': testConfusionMatrix.accuracy(),
+    'matrix': testConfusionMatrix.array()
+  })
+]);
+
+print(fc2022);
+
+Export.table.toDrive({
+  collection: fc2022,
+  description: 'Accuracy_2022',
+  folder: 'earthengine',
+  fileNamePrefix: 'accuracy_2022',
+  fileFormat: 'CSV'
+});
+
+
+// Sınıf renkleri ve etiketleri
+var classColors = ['blue', 'turquoise', 'red', 'green', 'brown', 'orange'];
+var classLabels = ['Deniz', 'Göl', 'Bina', 'Orman', 'Arazi', 'Yol'];
+
+// Lejant simgelerini oluştur
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-right',
+    padding: '8px 15px'
+  }
+});
+
+// Lejant etiketlerini ve renkleri ekle
+var legendTitle = ui.Label({
+  value: 'Sınıflar',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '16px',
+    margin: '0 0 4px 0',
+    padding: '0'
+  }
+});
+legend.add(legendTitle);
+
+var makeRow = function(color, label) {
+  var colorBox = ui.Label({
+    style: {
+      backgroundColor: color,
+      padding: '8px',
+      margin: '0 0 4px 0'
+    }
+  });
+
+  var description = ui.Label({
+    value: label,
+    style: { margin: '0 0 4px 6px' }
+  });
+
+  return ui.Panel({
+    widgets: [colorBox, description],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+};
+
+for (var i = 0; i < classColors.length; i++) {
+  legend.add(makeRow(classColors[i], classLabels[i]));
+}
+
+// Haritaya lejantı ekle
+Map.add(legend);
+
+// Lejantı içeren haritayı indir
+var mapWithLegend = ui.Map();
+mapWithLegend.addLayer(classified, {min: 1, max: 6, palette: classColors}, 'istanbul_class');
+mapWithLegend.add(legend);
+print(mapWithLegend);
+
+Export.image.toDrive({
+  image: mapWithLegend.toByte(),
+  description: 'istanbul_class_with_legend',
+  folder: 'earthengine',
+  region: image.geometry(),
+  scale: 10,
+  maxPixels: 1e9
+});
